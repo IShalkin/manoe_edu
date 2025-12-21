@@ -1,0 +1,104 @@
+# MANOE - Multi-Agent Narrative Orchestration Engine
+# Docker Compose for Local Development and Self-Hosting
+#
+# Usage:
+#   1. Copy .env.example to .env and configure your API keys
+#   2. Run: docker-compose up -d
+#   3. Access frontend at http://localhost:5173
+#
+# Services:
+#   - frontend: React + TypeScript + Vite (port 5173)
+#   - redis: Message broker for SSE events
+#   - qdrant: Vector database for character/worldbuilding memory
+#
+# Note: The Python orchestrator has been deprecated in favor of the
+# TypeScript api-gateway implementation. For production deployments,
+# use docker-compose.vps.yml which includes the api-gateway service.
+
+version: "3.8"
+
+services:
+  # ==========================================================================
+  # Frontend - React + TypeScript + Vite
+  # ==========================================================================
+  frontend:
+    build:
+      context: ./frontend
+      dockerfile: Dockerfile
+    container_name: manoe-frontend
+    restart: unless-stopped
+    ports:
+      - "${FRONTEND_PORT:-5173}:80"
+    environment:
+      - VITE_SUPABASE_URL=${VITE_SUPABASE_URL:-}
+      - VITE_SUPABASE_ANON_KEY=${VITE_SUPABASE_ANON_KEY:-}
+      - VITE_API_URL=${VITE_API_URL:-http://localhost:3000/api}
+    depends_on:
+      redis:
+        condition: service_healthy
+    networks:
+      - manoe-network
+
+  # ==========================================================================
+  # Redis - Message Broker for SSE Events
+  # ==========================================================================
+  redis:
+    image: redis:7-alpine
+    container_name: manoe-redis
+    restart: unless-stopped
+    ports:
+      - "${REDIS_PORT:-6379}:6379"
+    volumes:
+      - redis-data:/data
+    command: redis-server --appendonly yes ${REDIS_PASSWORD:+--requirepass $REDIS_PASSWORD}
+    networks:
+      - manoe-network
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  # ==========================================================================
+  # Qdrant - Vector Database for Memory
+  # SECURITY: Bind to localhost only. For production, set QDRANT_API_KEY!
+  # ==========================================================================
+  qdrant:
+    image: qdrant/qdrant:v1.7.4
+    container_name: manoe-qdrant
+    restart: unless-stopped
+    ports:
+      # Bind to localhost only to prevent external access
+      # For production with external access, ensure QDRANT_API_KEY is set
+      - "127.0.0.1:${QDRANT_PORT:-6333}:6333"
+      - "127.0.0.1:${QDRANT_GRPC_PORT:-6334}:6334"
+    volumes:
+      - qdrant-data:/qdrant/storage
+    environment:
+      - QDRANT__SERVICE__GRPC_PORT=6334
+      - QDRANT__SERVICE__HTTP_PORT=6333
+      # SECURITY: Set API key in production to prevent unauthorized access
+      - QDRANT__SERVICE__API_KEY=${QDRANT_API_KEY:-}
+    networks:
+      - manoe-network
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:6333/"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+# ==========================================================================
+# Networks
+# ==========================================================================
+networks:
+  manoe-network:
+    driver: bridge
+
+# ==========================================================================
+# Volumes
+# ==========================================================================
+volumes:
+  redis-data:
+    driver: local
+  qdrant-data:
+    driver: local
