@@ -161,14 +161,15 @@ export class ProjectController {
     const project = await this.supabaseService.getProject(projectId);
     
     switch (phase) {
-      case "characters":
+      case "characters": {
         const narrative = await this.supabaseService.getNarrativePossibility(projectId);
         return {
           narrative_possibility: narrative,
           moral_compass: project?.moral_compass,
           target_audience: project?.target_audience,
         };
-      case "outlining":
+      }
+      case "outlining": {
         const characters = await this.supabaseService.getCharacters(projectId);
         const narrativeForOutline = await this.supabaseService.getNarrativePossibility(projectId);
         return {
@@ -176,18 +177,21 @@ export class ProjectController {
           characters,
           moral_compass: project?.moral_compass,
         };
-      case "drafting":
+      }
+      case "drafting": {
         const outline = await this.supabaseService.getOutline(projectId);
         return {
           outline,
           moral_compass: project?.moral_compass,
         };
-      case "critique":
+      }
+      case "critique": {
         const drafts = await this.supabaseService.getDrafts(projectId);
         return {
           drafts,
           moral_compass: project?.moral_compass,
         };
+      }
       default:
         return {};
     }

@@ -4,6 +4,7 @@ import "@tsed/platform-express";
 import "@tsed/socketio";
 import "@tsed/swagger";
 import * as bodyParser from "body-parser";
+import { Request, Response, NextFunction } from "express";
 import compress from "compression";
 import cookieParser from "cookie-parser";
 import cors from "cors";
@@ -118,7 +119,7 @@ export class Server {
     // Handle CORS preflight requests explicitly before any routes
     const corsOrigin = process.env.CORS_ORIGIN || "*";
     
-    this.app.use((req: any, res: any, next: any) => {
+    this.app.use((req: Request, res: Response, next: NextFunction) => {
       // Set CORS headers for all requests
       res.header("Access-Control-Allow-Origin", corsOrigin);
       res.header("Access-Control-Allow-Methods", "GET, POST, PUT, DELETE, OPTIONS, PATCH");

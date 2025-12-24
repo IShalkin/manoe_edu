@@ -51,10 +51,11 @@ export class AgentFactory {
   private createAgent(agentType: AgentType): BaseAgent {
     console.log(`[AgentFactory] Creating agent: ${agentType}, hasRedisStreams: ${!!this.redisStreams}`);
     switch (agentType) {
-      case AgentType.ARCHITECT:
+      case AgentType.ARCHITECT: {
         const architect = new ArchitectAgent(this.llmProvider, this.langfuse, this.contentGuardrail, this.consistencyGuardrail, this.redisStreams);
-        console.log(`[AgentFactory] ArchitectAgent created, redisStreams in instance: ${!!(architect as any).redisStreams}`);
+        console.log(`[AgentFactory] ArchitectAgent created`);
         return architect;
+      }
       case AgentType.PROFILER:
         return new ProfilerAgent(this.llmProvider, this.langfuse, this.contentGuardrail, this.consistencyGuardrail, this.redisStreams);
       case AgentType.WORLDBUILDER:

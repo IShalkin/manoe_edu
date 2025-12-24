@@ -47,7 +47,7 @@ export function CinematicAgentPanel({ runId }: CinematicAgentPanelProps) {
 
   // Get agent statuses
   const agentStatuses = useMemo(() => {
-    const statuses: Record<AgentType, "idle" | "active" | "speaking" | "listening"> = {} as any;
+    const statuses: Partial<Record<AgentType, "idle" | "active" | "speaking" | "listening">> = {};
     
     ALL_AGENTS.forEach((agent) => {
       if (agent === activeAgent) {

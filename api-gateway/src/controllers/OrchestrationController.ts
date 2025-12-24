@@ -461,7 +461,7 @@ Initiates a new narrative generation run. Returns immediately with a run ID.
           location: "OrchestrationController.ts:startGeneration:error",
           message: "startGeneration error",
           data: {
-            errorMessage: (error as any)?.message ?? String(error),
+            errorMessage: error instanceof Error ? error.message : String(error),
             errorStack: error instanceof Error ? error.stack : undefined,
           },
           timestamp: Date.now(),
@@ -543,7 +543,7 @@ data: {"error": "...", "phase": "drafting", "recoverable": false}
 
     // First, send all existing events from the stream (catch up)
     // Track the last event ID to avoid race condition when switching to live streaming
-    let lastEventId = "0";
+    const lastEventId = "0";
     try {
       const existingEvents = await this.redisStreams.getEvents(runId, "0", 1000);
       console.log(`[OrchestrationController] Sending ${existingEvents.length} existing events for runId: ${runId}`);

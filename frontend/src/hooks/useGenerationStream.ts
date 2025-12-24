@@ -239,7 +239,7 @@ export function useGenerationStream({
             
             // Update active agent from cinematic events
             if (data.type === 'agent_thought' || data.type === 'agent_dialogue') {
-              const agentData = data.data as any;
+              const agentData = data.data as { agent?: string; from?: string };
               if (agentData.agent || agentData.from) {
                 setActiveAgent(agentData.agent || agentData.from);
               }
