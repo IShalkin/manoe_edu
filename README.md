@@ -610,6 +610,16 @@ docker-compose up -d
 # Access the orchestrator API at http://localhost:8001
 ```
 
+## 📚 Architecture Documentation
+
+For developers who want to understand the MANOE architecture in depth:
+
+- **[Architecture Learning Path](docs/ARCHITECTURE_LEARNING_PATH.md)** - Prioritized guide for learning the codebase
+- **[Execution Traces](docs/EXECUTION_TRACES.md)** - Detailed flow diagrams for key system operations
+- **[UI Architecture](docs/UI_ARCHITECTURE.md)** - Frontend architecture and Glass Brain visualization
+
+Start with the Learning Path document to understand the foundational patterns before diving into specific implementations.
+
 ### Docker Services
 
 The docker-compose.yml includes the following services:
