@@ -1,95 +1,16 @@
 /**
- * ============================================================================
- * REDIS STREAMS SERVICE
- * ============================================================================
+ * Redis Streams Service for MANOE
+ * Provides reliable event streaming using Redis Streams for real-time updates
  * 
- * This service provides REAL-TIME EVENT STREAMING using Redis Streams.
- * It's the communication backbone that enables the "Glass Brain" UI where
- * users can watch AI agents think and collaborate in real-time.
+ * Features:
+ * - Reliable event delivery with consumer groups
+ * - Real-time event streaming to SSE endpoints
+ * - Event persistence and replay capability
+ * - Heartbeat support for connection keep-alive
  * 
- * WHY REDIS STREAMS?
- * ------------------
- * Redis Streams is a log-like data structure that's perfect for event streaming:
- *   - PERSISTENT: Events are stored, not just broadcast (unlike Pub/Sub)
- *   - ORDERED: Events have unique IDs with timestamps
- *   - REPLAYABLE: Clients can read from any point in the stream
- *   - SCALABLE: Consumer groups allow multiple readers
- * 
- * HOW IT WORKS:
- * -------------
- * 
- *   1. PUBLISHING EVENTS
- *      When something happens in the orchestrator (phase starts, agent completes, etc.),
- *      it calls publishEvent() which adds the event to a Redis Stream.
- *      
- *      Example: publishEvent(runId, "phase_start", { phase: "genesis" })
- *      
- *      This creates an entry in the stream "manoe:events:{runId}" with:
- *        - Unique ID (timestamp-based)
- *        - Event type
- *        - JSON data payload
- *        - Timestamp
- * 
- *   2. STREAMING TO CLIENTS
- *      The OrchestrationController has an SSE endpoint that uses streamEvents()
- *      to read events and send them to the browser.
- *      
- *      streamEvents() is an ASYNC GENERATOR that:
- *        - Blocks waiting for new events (XREAD BLOCK)
- *        - Yields events as they arrive
- *        - Sends heartbeats if no events (keeps connection alive)
- * 
- *   3. STREAM MANAGEMENT
- *      - Streams are automatically trimmed to prevent unbounded growth (MAXLEN ~1000)
- *      - Each run has its own stream for isolation
- *      - Global stream for monitoring all runs
- * 
- * STREAM NAMING:
- * --------------
- *   - Run-specific: "manoe:events:{runId}" - Events for a single generation run
- *   - Global: "manoe:events:global" - All events (for monitoring/debugging)
- * 
- * EVENT STRUCTURE:
- * ----------------
- *   {
- *     id: string,           // Redis Stream entry ID (e.g., "1703123456789-0")
- *     type: string,         // Event type (e.g., "phase_start", "agent_complete")
- *     runId: string,        // Generation run ID
- *     timestamp: string,    // ISO timestamp
- *     data: object          // Event-specific payload
- *   }
- * 
- * COMMON EVENT TYPES:
- * -------------------
- *   - "phase_start" / "phase_complete" - Phase transitions
- *   - "agent_start" / "agent_complete" - Agent activity
- *   - "agent_thought" - Cinematic thought bubble (Glass Brain)
- *   - "agent_dialogue" - Agent-to-agent communication
- *   - "scene_draft_start" / "scene_draft_complete" - Scene progress
- *   - "generation_completed" - Run finished successfully
- *   - "ERROR" - Terminal error occurred
- *   - "heartbeat" - Keep-alive (no actual event)
- * 
- * CONNECTION FLOW:
- * ----------------
- *   Browser → SSE Request → OrchestrationController → streamEvents()
- *                                                          ↓
- *                                                    XREAD BLOCK
- *                                                          ↓
- *                                                    Redis Stream
- *                                                          ↑
- *   StorytellerOrchestrator → publishEvent() → XADD → Redis Stream
- * 
- * CONSUMER GROUPS (ADVANCED):
- * ---------------------------
- * For scenarios where multiple consumers need to process events:
- *   - createConsumerGroup() creates a consumer group
- *   - Each consumer gets unique events (load balancing)
- *   - Useful for scaling event processing
- * 
- * @see StorytellerOrchestrator.ts for event publishing
- * @see OrchestrationController.ts for SSE endpoint
- * @see useGenerationStream.ts (frontend) for event consumption
+ * IMPORTANT: Uses separate Redis connections for reading and writing to avoid
+ * head-of-line blocking. XREAD BLOCK commands on a shared connection would
+ * block all other commands (including XADD publishes) until the block times out.
  */
 
 import { Service } from "@tsed/di";
@@ -119,7 +40,16 @@ export interface StreamInfo {
 
 @Service()
 export class RedisStreamsService {
-  private client: Redis | null = null;
+  // Dedicated writer client - never blocked by XREAD
+  private writerClient: Redis | null = null;
+  
+  // Redis URL for creating reader connections
+  private redisUrl: string = "";
+  
+  // Legacy alias for backward compatibility
+  private get client(): Redis | null {
+    return this.writerClient;
+  }
 
   // Stream name templates
   private readonly STREAM_EVENTS = "manoe:events:{runId}";
@@ -133,29 +63,43 @@ export class RedisStreamsService {
   }
 
   /**
-   * Establish connection to Redis
+   * Establish connection to Redis (writer client only)
+   * Reader connections are created per-stream to avoid head-of-line blocking
    */
   private connect(): void {
-    const redisUrl = process.env.REDIS_URL || "redis://localhost:6379";
-    this.client = new Redis(redisUrl);
+    this.redisUrl = process.env.REDIS_URL || "redis://localhost:6379";
+    this.writerClient = new Redis(this.redisUrl);
 
-    this.client.on("error", (err) => {
-      console.error("Redis Streams connection error:", err);
+    this.writerClient.on("error", (err) => {
+      console.error("Redis Streams writer connection error:", err);
     });
 
-    this.client.on("connect", () => {
-      console.log("Redis Streams connected");
+    this.writerClient.on("connect", () => {
+      console.log("Redis Streams writer connected");
     });
   }
 
   /**
-   * Get Redis client
+   * Get the writer Redis client (for XADD, XRANGE, etc.)
+   * This client is never blocked by XREAD operations
    */
   private getClient(): Redis {
-    if (!this.client) {
-      throw new Error("Redis client not initialized");
+    if (!this.writerClient) {
+      throw new Error("Redis writer client not initialized");
     }
-    return this.client;
+    return this.writerClient;
+  }
+  
+  /**
+   * Create a dedicated reader connection for streaming
+   * Each SSE connection gets its own reader to avoid blocking other operations
+   */
+  private createReaderConnection(): Redis {
+    const reader = new Redis(this.redisUrl);
+    reader.on("error", (err) => {
+      console.error("Redis Streams reader connection error:", err);
+    });
+    return reader;
   }
 
   /**
@@ -248,6 +192,10 @@ export class RedisStreamsService {
   /**
    * Stream events from a run-specific stream (async generator)
    * 
+   * IMPORTANT: Creates a dedicated Redis connection for this stream to avoid
+   * head-of-line blocking. The XREAD BLOCK command would otherwise block all
+   * other Redis operations on a shared connection (including XADD publishes).
+   * 
    * @param runId - Unique identifier for the generation run
    * @param startId - Start reading from this ID ("$" for new events only)
    * @param blockMs - Block timeout in milliseconds
@@ -257,53 +205,65 @@ export class RedisStreamsService {
     startId: string = "$",
     blockMs: number = 5000
   ): AsyncGenerator<StreamEvent, void, unknown> {
-    const client = this.getClient();
+    // Create a dedicated reader connection for this stream
+    // This prevents XREAD BLOCK from blocking XADD operations on the writer
+    const readerClient = this.createReaderConnection();
     const streamKey = this.getStreamKey(runId);
     let lastId = startId;
 
-    while (true) {
-      try {
-        const entries = await client.call(
-          "XREAD",
-          "BLOCK",
-          blockMs.toString(),
-          "COUNT",
-          "10",
-          "STREAMS",
-          streamKey,
-          lastId
-        ) as Array<[string, Array<[string, string[]]>]> | null;
+    try {
+      while (true) {
+        try {
+          const entries = await readerClient.call(
+            "XREAD",
+            "BLOCK",
+            blockMs.toString(),
+            "COUNT",
+            "10",
+            "STREAMS",
+            streamKey,
+            lastId
+          ) as Array<[string, Array<[string, string[]]>]> | null;
 
-        if (entries && entries.length > 0) {
-          for (const [, streamEntries] of entries) {
-            for (const [entryId, fields] of streamEntries) {
-              lastId = entryId;
-              yield this.parseStreamEntry(entryId, fields);
+          if (entries && entries.length > 0) {
+            for (const [, streamEntries] of entries) {
+              for (const [entryId, fields] of streamEntries) {
+                lastId = entryId;
+                yield this.parseStreamEntry(entryId, fields);
+              }
             }
+          } else {
+            // No new events, yield heartbeat
+            yield {
+              id: "heartbeat",
+              type: "heartbeat",
+              runId: runId,
+              timestamp: new Date().toISOString(),
+              data: {},
+            };
           }
-        } else {
-          // No new events, yield heartbeat
+        } catch (error) {
+          if ((error as Error).message?.includes("NOGROUP")) {
+            break;
+          }
+          // Log error and yield error event
           yield {
-            id: "heartbeat",
-            type: "heartbeat",
+            id: "error",
+            type: "error",
             runId: runId,
             timestamp: new Date().toISOString(),
-            data: {},
+            data: { error: String(error) },
           };
+          await this.sleep(1000);
         }
-      } catch (error) {
-        if ((error as Error).message?.includes("NOGROUP")) {
-          break;
-        }
-        // Log error and yield error event
-        yield {
-          id: "error",
-          type: "error",
-          runId: runId,
-          timestamp: new Date().toISOString(),
-          data: { error: String(error) },
-        };
-        await this.sleep(1000);
+      }
+    } finally {
+      // Clean up the dedicated reader connection when the generator ends
+      // This happens when the SSE connection closes or the generator is stopped
+      try {
+        await readerClient.quit();
+      } catch (e) {
+        // Ignore cleanup errors
       }
     }
   }
@@ -450,12 +410,13 @@ export class RedisStreamsService {
   }
 
   /**
-   * Disconnect from Redis
+   * Disconnect from Redis (writer client)
+   * Note: Reader connections are cleaned up automatically when their generators end
    */
   async disconnect(): Promise<void> {
-    if (this.client) {
-      await this.client.quit();
-      this.client = null;
+    if (this.writerClient) {
+      await this.writerClient.quit();
+      this.writerClient = null;
     }
   }
 }

@@ -502,13 +502,12 @@ export class StorytellerOrchestrator {
     state.currentScene = sceneNum;
     await this.publishEvent(runId, "scene_draft_start", { sceneNum });
 
-    // Get relevant context from Qdrant
     const sceneTitle = String(sceneOutline.title ?? `Scene ${sceneNum}`);
-    const relevantCharacters = await this.qdrantMemory.searchCharacters(
-      options.projectId,
-      sceneTitle,
-      3
-    );
+
+    // Note: Characters are already available in state.characters from the Characters phase.
+    // WriterAgent accesses them via context.state. Qdrant semantic search is used for
+    // cross-project "eternal memory" but not needed in the hot path since all characters
+    // for this run are already in memory.
 
     // Store scene outline in state for WriterAgent to access
     const outline = state.outline as Record<string, unknown>;

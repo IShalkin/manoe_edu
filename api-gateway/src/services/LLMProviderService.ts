@@ -62,6 +62,48 @@ const MODEL_CONTEXT_LENGTHS: Record<string, number> = {
 };
 
 /**
+ * Model max OUTPUT token limits (completion tokens only)
+ * Different from context length - this is the max tokens the model can generate
+ * Used to prevent "max_tokens exceeds model limit" errors
+ */
+const MODEL_MAX_OUTPUT_TOKENS: Record<string, number> = {
+  // Claude models (Anthropic)
+  "claude-3-5-haiku": 8192,
+  "claude-3-5-sonnet": 8192,
+  "claude-3-haiku": 4096,
+  "claude-3-sonnet": 4096,
+  "claude-3-opus": 4096,
+  "claude-opus-4": 16384,
+  "claude-sonnet-4": 16384,
+  // GPT-4 variants (OpenAI)
+  "gpt-4": 8192,
+  "gpt-4-0314": 8192,
+  "gpt-4-0613": 8192,
+  "gpt-4-32k": 8192,
+  "gpt-4-turbo": 4096,
+  "gpt-4-1106": 4096,
+  "gpt-4-0125": 4096,
+  "gpt-4o": 16384,
+  "gpt-4o-mini": 16384,
+  "gpt-5": 32768,
+  "o1": 32768,
+  "o3": 32768,
+  // GPT-3.5 variants
+  "gpt-3.5-turbo": 4096,
+  // Gemini models
+  "gemini-3-pro": 8192,
+  "gemini-3-flash": 8192,
+  "gemini-2": 8192,
+  "gemini-1.5-pro": 8192,
+  "gemini-1.5-flash": 8192,
+  // DeepSeek models
+  "deepseek-v3": 8192,
+  "deepseek-r1": 8192,
+  // Default (conservative)
+  "default": 4096,
+};
+
+/**
  * Get the context length for a model, with fallback to default
  */
 function getModelContextLength(model: string): number {
@@ -76,6 +118,40 @@ function getModelContextLength(model: string): number {
     }
   }
   return MODEL_CONTEXT_LENGTHS["default"];
+}
+
+/**
+ * Get the max output tokens for a model, with fallback to default
+ * Handles both direct model names and OpenRouter-style names (provider/model)
+ */
+function getModelMaxOutputTokens(model: string): number {
+  // Normalize model name: remove provider prefix if present (e.g., "anthropic/claude-3-5-haiku" -> "claude-3-5-haiku")
+  const normalizedModel = model.includes("/") ? model.split("/").pop()! : model;
+  
+  // Check for exact match first
+  if (MODEL_MAX_OUTPUT_TOKENS[normalizedModel]) {
+    return MODEL_MAX_OUTPUT_TOKENS[normalizedModel];
+  }
+  // Check for prefix matches (e.g., "claude-3-5-haiku-20241022" matches "claude-3-5-haiku")
+  for (const [key, value] of Object.entries(MODEL_MAX_OUTPUT_TOKENS)) {
+    if (key !== "default" && normalizedModel.startsWith(key)) {
+      return value;
+    }
+  }
+  return MODEL_MAX_OUTPUT_TOKENS["default"];
+}
+
+/**
+ * Cap max_tokens to the model's output limit
+ * Returns the capped value and logs if capping occurred
+ */
+function capMaxTokensToModelLimit(model: string, requestedMaxTokens: number): number {
+  const modelLimit = getModelMaxOutputTokens(model);
+  if (requestedMaxTokens > modelLimit) {
+    console.log(`[LLMProviderService] Capping max_tokens for ${model}: requested ${requestedMaxTokens}, model limit ${modelLimit}`);
+    return modelLimit;
+  }
+  return requestedMaxTokens;
 }
 
 @Service()
@@ -278,9 +354,13 @@ export class LLMProviderService {
       systemMessage += "\n\nYou MUST respond with valid JSON only, no other text.";
     }
 
+    // Cap max_tokens to model's output limit to prevent "max_tokens exceeds model limit" errors
+    const requestedMaxTokens = options.maxTokens ?? 4096;
+    const cappedMaxTokens = capMaxTokensToModelLimit(options.model, requestedMaxTokens);
+
     const response = await client.messages.create({
       model: options.model,
-      max_tokens: options.maxTokens ?? 4096,
+      max_tokens: cappedMaxTokens,
       system: systemMessage,
       messages: chatMessages,
       temperature: options.temperature ?? 0.7,
@@ -332,11 +412,16 @@ export class LLMProviderService {
       fullPrompt += "\n\nYou MUST respond with valid JSON only, no other text.";
     }
 
+    // Cap maxOutputTokens to model's output limit
+    const cappedMaxTokens = options.maxTokens 
+      ? capMaxTokensToModelLimit(options.model, options.maxTokens)
+      : undefined;
+
     const result = await model.generateContent({
       contents: [{ role: "user", parts: [{ text: fullPrompt }] }],
       generationConfig: {
         temperature: options.temperature ?? 0.7,
-        maxOutputTokens: options.maxTokens,
+        maxOutputTokens: cappedMaxTokens,
       },
     });
 
@@ -378,7 +463,8 @@ export class LLMProviderService {
     };
 
     if (options.maxTokens) {
-      requestParams.max_tokens = options.maxTokens;
+      // Cap max_tokens to model's output limit
+      requestParams.max_tokens = capMaxTokensToModelLimit(options.model, options.maxTokens);
     }
 
     if (options.responseFormat?.type === "json_object") {
@@ -418,7 +504,8 @@ export class LLMProviderService {
     };
 
     if (options.maxTokens) {
-      requestParams.max_tokens = options.maxTokens;
+      // Cap max_tokens to model's output limit
+      requestParams.max_tokens = capMaxTokensToModelLimit(options.model, options.maxTokens);
     }
 
     if (options.responseFormat?.type === "json_object") {
@@ -458,7 +545,8 @@ export class LLMProviderService {
     };
 
     if (options.maxTokens) {
-      requestParams.max_tokens = options.maxTokens;
+      // Cap max_tokens to model's output limit
+      requestParams.max_tokens = capMaxTokensToModelLimit(options.model, options.maxTokens);
     }
 
     if (options.responseFormat?.type === "json_object") {
