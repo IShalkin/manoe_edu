@@ -6,7 +6,6 @@ A scalable, event-driven platform designed to automate the creation of exception
 
 - **Frontend**: https://manoe.iliashalkin.com
 - **API Gateway (ts.ed)**: https://manoe-gateway.iliashalkin.com
-- **Orchestrator API**: https://manoe-orchestrator.iliashalkin.com
 - **Langfuse Dashboard**: https://langfuse.iliashalkin.com
 
 ## System Architecture
@@ -607,18 +606,8 @@ cp .env.example .env
 docker-compose up -d
 
 # Access the frontend at http://localhost:5173
-# Access the orchestrator API at http://localhost:8001
+# Access the API Gateway at http://localhost:8001
 ```
-
-## 📚 Architecture Documentation
-
-For developers who want to understand the MANOE architecture in depth:
-
-- **[Architecture Learning Path](docs/ARCHITECTURE_LEARNING_PATH.md)** - Prioritized guide for learning the codebase
-- **[Execution Traces](docs/EXECUTION_TRACES.md)** - Detailed flow diagrams for key system operations
-- **[UI Architecture](docs/UI_ARCHITECTURE.md)** - Frontend architecture and Glass Brain visualization
-
-Start with the Learning Path document to understand the foundational patterns before diving into specific implementations.
 
 ### Docker Services
 
@@ -627,7 +616,7 @@ The docker-compose.yml includes the following services:
 | Service | Port | Description |
 |---------|------|-------------|
 | **frontend** | 5173 | React + TypeScript + Vite web interface |
-| **orchestrator** | 8001 | Python FastAPI AI orchestrator with SSE |
+| **api-gateway** | 8001 | TypeScript ts.ed API Gateway with SSE |
 | **redis** | 6379 | Message broker for real-time SSE events |
 | **qdrant** | 6333 | Vector database for character/worldbuilding memory |
 | **langfuse-web** | 3000 | Langfuse observability UI and API |
@@ -735,7 +724,7 @@ The following tables are used for persistence:
 
 ## API Endpoints
 
-### Orchestrator API (Port 8001)
+### API Gateway (Port 8001)
 
 | Endpoint | Method | Description |
 |----------|--------|-------------|
@@ -780,7 +769,7 @@ The following tables are used for persistence:
 - `VITE_SUPABASE_ANON_KEY` - Supabase anonymous key
 - `VITE_ORCHESTRATOR_URL` - Orchestrator API URL
 
-### Orchestrator
+### API Gateway
 - `REDIS_URL` - Redis connection URL
 - `SUPABASE_URL` - Supabase project URL
 - `SUPABASE_KEY` - Supabase service key (required for artifact persistence)
