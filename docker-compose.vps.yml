@@ -33,10 +33,17 @@ services:
       - PORT=3000
       - CORS_ORIGIN=${CORS_ORIGIN:-*}
       - REDIS_URL=redis://manoe-redis:6379
+      - QDRANT_URL=${QDRANT_URL:-http://qdrant:6333}
+      - QDRANT_API_KEY=${QDRANT_API_KEY:-}
       - SUPABASE_URL=http://supabase-kong:8000
       - SUPABASE_KEY=${SUPABASE_KEY:-}
       - JWT_SECRET=${JWT_SECRET:-change-me-in-production}
       - LOG_LEVEL=${LOG_LEVEL:-info}
+      # Langfuse configuration
+      - LANGFUSE_HOST=${LANGFUSE_HOST:-http://langfuse-web:3000}
+      - LANGFUSE_PUBLIC_KEY=${LANGFUSE_PUBLIC_KEY:-}
+      - LANGFUSE_SECRET_KEY=${LANGFUSE_SECRET_KEY:-}
+      - OPENAI_API_KEY=${OPENAI_API_KEY:-}
       # nginx-proxy configuration - use subdomain to avoid conflict with frontend
       - VIRTUAL_HOST=manoe-gateway.iliashalkin.com
       - VIRTUAL_PORT=3000
