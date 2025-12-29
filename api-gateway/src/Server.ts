@@ -121,7 +121,9 @@ All endpoints require a valid API key passed via the \`x-api-key\` header or Bea
         const whitelist = corsOriginEnv.split(",").map(s => s.trim());
         
         if (!origin || whitelist.includes(origin)) {
-          callback(null, origin || "*");
+          // For requests without Origin header, return first whitelisted origin
+          // This allows server-to-server calls while maintaining CORS security
+          callback(null, origin || whitelist[0]);
         } else {
           callback(new Error(`Origin ${origin} not allowed by CORS`));
         }

@@ -312,8 +312,9 @@ describe('CORS Integration Test - Full Configuration', () => {
     app.use(cors({
       origin: (origin, callback) => {
         // Allow requests with no origin (like mobile apps or curl)
+        // Return first whitelisted origin instead of '*' to maintain credentials compatibility
         if (!origin) {
-          callback(null, '*');
+          callback(null, whitelist[0]);
           return;
         }
         
