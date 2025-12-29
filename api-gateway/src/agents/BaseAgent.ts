@@ -1,103 +1,8 @@
 /**
- * ============================================================================
- * BASE AGENT CLASS
- * ============================================================================
+ * Base Agent Class
  * 
- * This is the FOUNDATION for all AI agents in MANOE. Every specialized agent
- * (Architect, Writer, Critic, etc.) extends this class to inherit common
- * functionality. Think of it as the "DNA" that all agents share.
- * 
- * DESIGN PATTERN: Template Method
- * --------------------------------
- * BaseAgent defines the skeleton of agent operations:
- *   1. Get system prompt (from Langfuse or fallback)
- *   2. Build user prompt (phase-specific)
- *   3. Call LLM with retry logic
- *   4. Parse and validate response
- *   5. Apply guardrails
- *   6. Emit events for UI
- * 
- * Subclasses override execute() to implement specific behavior.
- * 
- * WHAT EACH AGENT INHERITS:
- * -------------------------
- * 
- *   1. callLLM() - Make LLM API calls with automatic retry
- *      - Handles provider selection (OpenAI, Anthropic, etc.)
- *      - Tracks calls in Langfuse for observability
- *      - Applies phase-specific token limits
- * 
- *   2. parseJSON() / parseJSONArray() - Parse LLM responses
- *      - Handles markdown code blocks (```json ... ```)
- *      - Graceful fallback for malformed JSON
- * 
- *   3. validateOutput() - Validate against Zod schemas
- *      - Type-safe output validation
- *      - Logs validation errors to Langfuse
- * 
- *   4. applyGuardrails() - Content safety checks
- *      - ContentGuardrail: Check for inappropriate content
- *      - ConsistencyGuardrail: Check against Key Constraints
- * 
- *   5. emitThought() / emitDialogue() - Cinematic UI events
- *      - "Glass Brain" visualization of agent thinking
- *      - Agent-to-agent communication display
- * 
- * DEPENDENCY INJECTION:
- * ---------------------
- * Agents receive their dependencies via constructor:
- *   - llmProvider: For making LLM API calls
- *   - langfuse: For tracing and prompt management
- *   - contentGuardrail: Optional content safety checker
- *   - consistencyGuardrail: Optional constraint checker
- *   - redisStreams: For emitting real-time events
- * 
- * This makes agents testable (can inject mocks) and flexible.
- * 
- * AGENT TYPES:
- * ------------
- * All 9 agent types extend BaseAgent:
- *   - ARCHITECT: Designs narrative structure
- *   - PROFILER: Creates character profiles
- *   - WORLDBUILDER: Builds world elements
- *   - STRATEGIST: Plans scene structure
- *   - WRITER: Generates prose
- *   - CRITIC: Evaluates and critiques
- *   - ORIGINALITY: Checks for cliches
- *   - IMPACT: Assesses emotional resonance
- *   - ARCHIVIST: Maintains continuity
- * 
- * CINEMATIC UI ("Glass Brain"):
- * -----------------------------
- * The emitThought() and emitDialogue() methods enable a unique UI feature
- * where users can watch agents "think" and "talk" to each other:
- * 
- *   emitThought(runId, "Analyzing character motivations...", "neutral")
- *   → Shows thought bubble above Writer agent
- * 
- *   emitDialogue(runId, AgentType.CRITIC, "This scene needs more tension", "suggestion")
- *   → Shows message arrow from Writer to Critic
- * 
- * This creates an engaging, transparent experience where users understand
- * what the AI is doing at each step.
- * 
- * GUARDRAILS:
- * -----------
- * Two types of guardrails protect output quality:
- * 
- *   1. ContentGuardrail
- *      - Checks for inappropriate/harmful content
- *      - Returns severity levels (low, medium, high)
- *      - Logs violations to Langfuse
- * 
- *   2. ConsistencyGuardrail
- *      - Checks content against Key Constraints
- *      - Prevents "context drift" (forgetting established facts)
- *      - Example: Catches if hero's eye color changes mid-story
- * 
- * @see AgentFactory.ts for how agents are instantiated
- * @see StorytellerOrchestrator.ts for how agents are called
- * @see WriterAgent.ts, CriticAgent.ts, etc. for implementations
+ * Abstract base class for all agents in the MANOE system.
+ * Provides common functionality for LLM calls, JSON parsing, and Langfuse tracing.
  */
 
 import { AgentType, GenerationState, MessageType, KeyConstraint } from "../models/AgentModels";
@@ -331,6 +236,36 @@ export abstract class BaseAgent {
       }
     } else {
       console.warn(`[${this.agentType}] RedisStreams not available, cannot emit dialogue`);
+    }
+  }
+
+  /**
+   * Emit agent message event with actual generated content
+   * This sends the LLM-generated content to the frontend for display in agent cards
+   */
+  protected async emitMessage(
+    runId: string,
+    content: string | Record<string, unknown>,
+    phase: GenerationPhase
+  ): Promise<void> {
+    if (this.redisStreams) {
+      // Convert content to string if it's an object
+      const contentStr = typeof content === "string" ? content : JSON.stringify(content, null, 2);
+      // Truncate for logging but send full content
+      const logContent = contentStr.length > 200 ? contentStr.substring(0, 200) + "..." : contentStr;
+      console.log(`[${this.agentType}] Emitting message:`, logContent, `runId: ${runId}`);
+      try {
+        const eventId = await this.redisStreams.publishEvent(runId, "agent_message", {
+          agent: this.agentType,
+          content: contentStr,
+          phase,
+        });
+        console.log(`[${this.agentType}] Published message event with ID:`, eventId);
+      } catch (error) {
+        console.error(`[${this.agentType}] Error publishing message event:`, error);
+      }
+    } else {
+      console.warn(`[${this.agentType}] RedisStreams not available, cannot emit message`);
     }
   }
 

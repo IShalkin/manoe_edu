@@ -1,111 +1,8 @@
 /**
- * ============================================================================
- * WRITER AGENT
- * ============================================================================
+ * Writer Agent
  * 
- * The Writer is the PROSE CRAFTSMAN of MANOE - the agent that transforms
- * outlines and plans into actual story text. It's like a novelist who takes
- * a screenplay and writes the full novel.
- * 
- * WHEN THE WRITER RUNS:
- * ---------------------
- * The Writer is active in three phases:
- * 
- *   1. DRAFTING PHASE
- *      - Input: Scene outline from Strategist
- *      - Output: First draft of scene prose
- *      - Goal: Create engaging narrative with proper pacing
- * 
- *   2. REVISION PHASE
- *      - Input: Draft + Critic's feedback
- *      - Output: Revised scene addressing issues
- *      - Goal: Improve based on specific critique points
- * 
- *   3. POLISH PHASE
- *      - Input: Approved draft
- *      - Output: Publication-ready prose
- *      - Goal: Final polish for flow, word choice, consistency
- * 
- * THE WRITER↔CRITIC LOOP:
- * -----------------------
- * The Writer works closely with the Critic in a revision loop:
- * 
- *   Writer drafts scene
- *        ↓
- *   Critic evaluates (approved? or needs revision?)
- *        ↓
- *   If needs revision: Writer revises based on feedback
- *        ↓
- *   Critic re-evaluates
- *        ↓
- *   (Maximum 2 iterations to prevent infinite loops)
- * 
- * This mimics the real editorial process where writers and editors
- * collaborate to improve the work.
- * 
- * KEY CONSTRAINTS:
- * ----------------
- * The Writer MUST respect Key Constraints - canonical facts that cannot
- * be violated. These are included in every prompt:
- * 
- *   "KEY CONSTRAINTS (MUST NOT VIOLATE):
- *    - hero_eye_color: Blue (Scene 1)
- *    - villain_motivation: Revenge for brother's death (Scene 2)"
- * 
- * This prevents "context drift" where the Writer might forget that
- * the hero has blue eyes and accidentally describe them as brown.
- * 
- * PROMPT MANAGEMENT:
- * ------------------
- * The Writer's system prompt is fetched from Langfuse:
- *   1. Try to get "manoe-writer-v1" from Langfuse (with "production" label)
- *   2. If unavailable, use hardcoded fallback prompt
- * 
- * This allows prompt tuning without code deployments.
- * 
- * USER PROMPT STRUCTURE:
- * ----------------------
- * The user prompt varies by phase:
- * 
- *   DRAFTING:
- *   "Write Scene 3: 'The Confrontation'
- *    Scene outline: {...}
- *    Requirements: [emotional beat, conflict, sensory details]
- *    KEY CONSTRAINTS: [...]
- *    Write the full scene prose."
- * 
- *   REVISION:
- *   "Revise Scene 3 based on critique feedback.
- *    Original draft: [...]
- *    Critique: [issues, revision requests]
- *    KEY CONSTRAINTS: [...]
- *    Write the revised scene."
- * 
- *   POLISH:
- *   "Polish Scene 3 for final publication quality.
- *    Current draft: [...]
- *    Polish for: [flow, word choice, voice, proofreading]"
- * 
- * GUARDRAILS:
- * -----------
- * The Writer's output is checked by guardrails:
- *   - ContentGuardrail: Ensures appropriate content
- *   - ConsistencyGuardrail: Checks against Key Constraints
- * 
- * Violations are logged to Langfuse for debugging.
- * 
- * CINEMATIC UI:
- * -------------
- * The Writer emits thoughts for the "Glass Brain" UI:
- *   - "Analyzing scene structure and character motivations..."
- *   - "Draft complete. Awaiting Critic's feedback."
- *   - "Revising based on critique feedback..."
- * 
- * This helps users understand what the Writer is doing.
- * 
- * @see CriticAgent.ts for the evaluation partner
- * @see StorytellerOrchestrator.ts for the revision loop implementation
- * @see BaseAgent.ts for inherited functionality
+ * Generates prose for scenes with voice and style.
+ * Active in: Drafting, Revision, Polish phases
  */
 
 import { AgentType, KeyConstraint } from "../models/AgentModels";
@@ -164,9 +61,16 @@ export class WriterAgent extends BaseAgent {
       // Apply guardrails
       await this.applyGuardrails(response, state.keyConstraints, runId);
       
+      // Emit the actual generated content for the frontend to display
+      await this.emitMessage(runId, { content: response, sceneNumber: state.currentScene }, phase);
+      
       // Emit completion thought
       if (phase === GenerationPhase.DRAFTING) {
         await this.emitThought(runId, "Draft complete. Awaiting Critic's feedback.", "neutral", AgentType.CRITIC);
+      } else if (phase === GenerationPhase.REVISION) {
+        await this.emitThought(runId, "Revision complete. Ready for re-evaluation.", "neutral", AgentType.CRITIC);
+      } else if (phase === GenerationPhase.POLISH) {
+        await this.emitThought(runId, "Polish complete. Scene finalized.", "excited");
       }
       
       return { content: response };
@@ -174,6 +78,8 @@ export class WriterAgent extends BaseAgent {
 
     // For other phases, parse as JSON
     const content = this.parseJSON(response);
+    // Emit the actual generated content for the frontend to display
+    await this.emitMessage(runId, content as Record<string, unknown>, phase);
     return { content: content as Record<string, unknown> };
   }
 

@@ -524,6 +524,12 @@ interface AgentMessage {
     result?: Record<string, unknown>;
     result_summary?: string;
     round?: number;
+    // Additional fields for agent_thought and agent_dialogue events from backend
+    thought?: string;  // For agent_thought events
+    from?: string;     // For agent_dialogue events (sender agent)
+    to?: string;       // For agent_dialogue events (recipient agent)
+    sentiment?: string; // For agent_thought events
+    dialogueType?: string; // For agent_dialogue events
   };
 }
 
@@ -563,6 +569,19 @@ interface EditState {
 
 const AGENTS = ['Architect', 'Profiler', 'Narrator', 'Strategist', 'Writer', 'Critic'] as const;
 type AgentName = typeof AGENTS[number];
+
+// Normalize agent name from backend (lowercase) to frontend (title case)
+// Backend sends: "architect", "profiler", etc.
+// Frontend expects: "Architect", "Profiler", etc.
+const normalizeAgentName = (name: string | undefined): string | undefined => {
+  if (!name) return undefined;
+  const normalized = name.charAt(0).toUpperCase() + name.slice(1).toLowerCase();
+  // Check if it's a valid agent name
+  if (AGENTS.includes(normalized as AgentName)) {
+    return normalized;
+  }
+  return name; // Return original if not a known agent
+};
 
 const AGENT_DEPENDENCIES: Record<AgentName, AgentName[]> = {
   Architect: ['Profiler', 'Narrator', 'Strategist', 'Writer', 'Critic'],
@@ -891,11 +910,20 @@ export function AgentChat({ runId, orchestratorUrl, onComplete, onClose, project
     if (projectResult?.agentOutputs?.[agent]) {
       return projectResult.agentOutputs[agent];
     }
+    // Look for agent_message events (original format)
     const agentMessages = messages.filter(
-      m => m.type === 'agent_message' && m.data.agent === agent && m.data.content?.trim()
+      m => m.type === 'agent_message' && normalizeAgentName(m.data.agent as string) === agent && m.data.content?.trim()
     );
     if (agentMessages.length > 0) {
       return agentMessages[agentMessages.length - 1].data.content || '';
+    }
+    // Also look for agent_thought events (cinematic format from backend)
+    // Backend sends: { type: "agent_thought", data: { agent: "architect", thought: "..." } }
+    const thoughtMessages = messages.filter(
+      m => m.type === 'agent_thought' && normalizeAgentName(m.data.agent as string) === agent && m.data.thought
+    );
+    if (thoughtMessages.length > 0) {
+      return thoughtMessages[thoughtMessages.length - 1].data.thought as string || '';
     }
     return '';
   }, [messages, projectResult]);
@@ -1402,22 +1430,36 @@ export function AgentChat({ runId, orchestratorUrl, onComplete, onClose, project
     messages.forEach(msg => {
       // Defensive check: msg.data may be undefined for some event types
       if (!msg.data || typeof msg.data !== 'object') return;
-      const agent = msg.data.agent as string | undefined;
+      // Normalize agent name from backend (lowercase) to frontend (title case)
+      const rawAgent = (msg.data.agent || msg.data.from) as string | undefined;
+      const agent = normalizeAgentName(rawAgent);
       if (!agent || !states[agent]) return;
       
       if (msg.type === 'agent_start') {
         states[agent].status = 'thinking';
-        states[agent].lastUpdate = msg.timestamp;
+        states[agent].lastUpdate = msg.timestamp || '';
       } else if (msg.type === 'agent_complete') {
         states[agent].status = 'complete';
-        states[agent].lastUpdate = msg.timestamp;
+        states[agent].lastUpdate = msg.timestamp || '';
       } else if (msg.type === 'agent_message' && msg.data.content) {
         states[agent].messages.push({
-          content: msg.data.content,
-          round: msg.data.round || 1,
-          timestamp: msg.timestamp,
+          content: msg.data.content as string,
+          round: (msg.data.round as number) || 1,
+          timestamp: msg.timestamp || '',
         });
-        states[agent].lastUpdate = msg.timestamp;
+        states[agent].lastUpdate = msg.timestamp || '';
+      } else if (msg.type === 'agent_thought' && msg.data.thought) {
+        // Handle agent_thought events from backend cinematic UI
+        // Treat first thought as "thinking" status, subsequent as messages
+        if (states[agent].status === 'idle') {
+          states[agent].status = 'thinking';
+        }
+        states[agent].messages.push({
+          content: msg.data.thought as string,
+          round: 1,
+          timestamp: msg.timestamp || '',
+        });
+        states[agent].lastUpdate = msg.timestamp || '';
       }
     });
     

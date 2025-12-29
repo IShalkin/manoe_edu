@@ -1,96 +1,14 @@
 /**
- * ============================================================================
- * LLM PROVIDER SERVICE
- * ============================================================================
+ * LLM Provider Service
+ * Unified model client adapter supporting multiple LLM providers (BYOK)
  * 
- * This service provides a UNIFIED INTERFACE to multiple LLM (Large Language Model)
- * providers. It's the "translator" that lets the rest of the application talk to
- * any AI model without knowing the specific API details.
- * 
- * BYOK (BRING YOUR OWN KEY) MODEL:
- * --------------------------------
- * Users provide their own API keys for LLM providers. This means:
- *   - No server-side API key storage (security!)
- *   - Users pay for their own API usage
- *   - Users can choose their preferred provider/model
- *   - Fallback to environment variables if no key provided
- * 
- * SUPPORTED PROVIDERS:
- * --------------------
- * 
- *   1. OPENAI (api.openai.com)
- *      - Models: GPT-4, GPT-4-turbo, GPT-5, O1, O3
- *      - Uses official OpenAI SDK
- *      - Newer models use max_completion_tokens instead of max_tokens
- * 
- *   2. ANTHROPIC (api.anthropic.com)
- *      - Models: Claude 3 Opus, Claude 3 Sonnet, Claude 4
- *      - Uses official Anthropic SDK
- *      - System message handled separately from chat messages
- * 
- *   3. GOOGLE GEMINI (generativelanguage.googleapis.com)
- *      - Models: Gemini Pro, Gemini Flash, Gemini 3
- *      - Uses Google AI SDK
- *      - Messages combined into single prompt
- * 
- *   4. OPENROUTER (openrouter.ai)
- *      - Meta-provider: Access to 100+ models from various providers
- *      - OpenAI-compatible API
- *      - Useful for trying different models without multiple accounts
- * 
- *   5. DEEPSEEK (api.deepseek.com)
- *      - Models: DeepSeek V3, DeepSeek R1
- *      - OpenAI-compatible API
- *      - Good for cost-effective generation
- * 
- *   6. VENICE AI (api.venice.ai)
- *      - Models: Dolphin Mistral, Llama variants
- *      - OpenAI-compatible API
- *      - Privacy-focused provider
- * 
- * UNIFIED RESPONSE FORMAT:
- * ------------------------
- * All providers return the same LLMResponse structure:
- *   {
- *     content: string,      // The generated text
- *     model: string,        // Model used
- *     provider: LLMProvider,// Provider enum
- *     usage: TokenUsage,    // Token counts for billing
- *     finishReason: string, // Why generation stopped
- *     latencyMs?: number    // Response time
- *   }
- * 
- * RETRY LOGIC:
- * ------------
- * createCompletionWithRetry() handles transient errors:
- *   - Rate limits (429)
- *   - Server errors (500, 502, 503, 504)
- *   - Timeouts
- *   - Uses exponential backoff: 1s, 2s, 4s
- *   - Maximum 3 retries by default
- * 
- * SECURITY:
- * ---------
- *   - API keys are NEVER logged
- *   - Placeholder keys are rejected (prevents accidental commits)
- *   - Keys are trimmed and validated before use
- * 
- * USAGE EXAMPLE:
- * --------------
- *   const response = await llmProvider.createCompletionWithRetry({
- *     messages: [
- *       { role: 'system', content: 'You are a helpful assistant.' },
- *       { role: 'user', content: 'Write a story about a dragon.' }
- *     ],
- *     model: 'gpt-4',
- *     provider: LLMProvider.OPENAI,
- *     apiKey: userProvidedKey,
- *     temperature: 0.7,
- *     maxTokens: 4096,
- *   });
- * 
- * @see LLMModels.ts for type definitions
- * @see BaseAgent.ts for how agents use this service
+ * Supports:
+ * - OpenAI (GPT-5.2, GPT-5, O3, etc.)
+ * - Anthropic Claude (Opus 4.5, Sonnet 4, etc.)
+ * - Google Gemini (Gemini 3 Pro, Flash, etc.)
+ * - OpenRouter (access to all models)
+ * - DeepSeek (V3, R1)
+ * - Venice AI (Dolphin Mistral, Llama 4 Maverick)
  */
 
 import { Service } from "@tsed/di";
@@ -116,6 +34,50 @@ const PROVIDER_BASE_URLS: Record<string, string> = {
   venice: "https://api.venice.ai/api/v1",
 };
 
+/**
+ * Model context length limits (total tokens including prompt + completion)
+ * Used to cap max_tokens to avoid exceeding model limits
+ */
+const MODEL_CONTEXT_LENGTHS: Record<string, number> = {
+  // GPT-4 variants
+  "gpt-4": 8192,
+  "gpt-4-0314": 8192,
+  "gpt-4-0613": 8192,
+  "gpt-4-32k": 32768,
+  "gpt-4-32k-0314": 32768,
+  "gpt-4-32k-0613": 32768,
+  "gpt-4-turbo": 128000,
+  "gpt-4-turbo-preview": 128000,
+  "gpt-4-1106-preview": 128000,
+  "gpt-4-0125-preview": 128000,
+  "gpt-4o": 128000,
+  "gpt-4o-mini": 128000,
+  // GPT-3.5 variants
+  "gpt-3.5-turbo": 16385,
+  "gpt-3.5-turbo-16k": 16385,
+  "gpt-3.5-turbo-1106": 16385,
+  "gpt-3.5-turbo-0125": 16385,
+  // Default for unknown models (assume large context)
+  "default": 128000,
+};
+
+/**
+ * Get the context length for a model, with fallback to default
+ */
+function getModelContextLength(model: string): number {
+  // Check for exact match first
+  if (MODEL_CONTEXT_LENGTHS[model]) {
+    return MODEL_CONTEXT_LENGTHS[model];
+  }
+  // Check for prefix matches (e.g., "gpt-4o-2024-05-13" matches "gpt-4o")
+  for (const [key, value] of Object.entries(MODEL_CONTEXT_LENGTHS)) {
+    if (key !== "default" && model.startsWith(key)) {
+      return value;
+    }
+  }
+  return MODEL_CONTEXT_LENGTHS["default"];
+}
+
 @Service()
 export class LLMProviderService {
   /**
@@ -126,34 +88,42 @@ export class LLMProviderService {
    */
   async createCompletion(options: CompletionOptions): Promise<LLMResponse> {
     const startTime = Date.now();
+    console.log(`[LLMProviderService] Starting ${options.provider} completion with model ${options.model}`);
 
     let response: LLMResponse;
 
-    switch (options.provider) {
-      case LLMProvider.OPENAI:
-        response = await this.openAICompletion(options);
-        break;
-      case LLMProvider.ANTHROPIC:
-        response = await this.anthropicCompletion(options);
-        break;
-      case LLMProvider.GEMINI:
-        response = await this.geminiCompletion(options);
-        break;
-      case LLMProvider.OPENROUTER:
-        response = await this.openRouterCompletion(options);
-        break;
-      case LLMProvider.DEEPSEEK:
-        response = await this.deepSeekCompletion(options);
-        break;
-      case LLMProvider.VENICE:
-        response = await this.veniceCompletion(options);
-        break;
-      default:
-        throw new Error(`Unsupported provider: ${options.provider}`);
-    }
+    try {
+      switch (options.provider) {
+        case LLMProvider.OPENAI:
+          response = await this.openAICompletion(options);
+          break;
+        case LLMProvider.ANTHROPIC:
+          response = await this.anthropicCompletion(options);
+          break;
+        case LLMProvider.GEMINI:
+          response = await this.geminiCompletion(options);
+          break;
+        case LLMProvider.OPENROUTER:
+          response = await this.openRouterCompletion(options);
+          break;
+        case LLMProvider.DEEPSEEK:
+          response = await this.deepSeekCompletion(options);
+          break;
+        case LLMProvider.VENICE:
+          response = await this.veniceCompletion(options);
+          break;
+        default:
+          throw new Error(`Unsupported provider: ${options.provider}`);
+      }
 
-    response.latencyMs = Date.now() - startTime;
-    return response;
+      response.latencyMs = Date.now() - startTime;
+      console.log(`[LLMProviderService] ${options.provider} completion finished in ${response.latencyMs}ms, tokens: ${response.usage?.totalTokens ?? 0}`);
+      return response;
+    } catch (error) {
+      const elapsed = Date.now() - startTime;
+      console.error(`[LLMProviderService] ${options.provider} completion failed after ${elapsed}ms:`, error instanceof Error ? error.message : error);
+      throw error;
+    }
   }
 
   /**
@@ -215,6 +185,7 @@ export class LLMProviderService {
     const client = new OpenAI({
       apiKey,
       baseURL: PROVIDER_BASE_URLS.openai,
+      timeout: 120000, // 2 minute timeout
     });
 
     const requestParams: OpenAI.ChatCompletionCreateParams = {
@@ -224,18 +195,41 @@ export class LLMProviderService {
     };
 
     if (options.maxTokens) {
+      // Get model context length and cap max_tokens to leave room for prompt
+      // Estimate prompt tokens (rough estimate: 4 chars per token)
+      const estimatedPromptTokens = Math.ceil(
+        options.messages.reduce((acc, msg) => acc + msg.content.length, 0) / 4
+      );
+      const modelContextLength = getModelContextLength(options.model);
+      // Leave at least 500 tokens buffer for safety, and ensure we don't exceed context
+      const maxAllowedTokens = Math.max(500, modelContextLength - estimatedPromptTokens - 500);
+      const cappedMaxTokens = Math.min(options.maxTokens, maxAllowedTokens);
+      
+      console.log(`[LLMProviderService] Model ${options.model} context: ${modelContextLength}, estimated prompt: ${estimatedPromptTokens}, requested: ${options.maxTokens}, capped to: ${cappedMaxTokens}`);
+      
       // Newer models (gpt-5.x, o1, o3) use max_completion_tokens instead of max_tokens
       const usesNewTokenParam = options.model.startsWith("gpt-5") || 
                                  options.model.startsWith("o1") || 
                                  options.model.startsWith("o3");
       if (usesNewTokenParam) {
-        (requestParams as unknown as Record<string, unknown>).max_completion_tokens = options.maxTokens;
+        (requestParams as unknown as Record<string, unknown>).max_completion_tokens = cappedMaxTokens;
       } else {
-        requestParams.max_tokens = options.maxTokens;
+        requestParams.max_tokens = cappedMaxTokens;
       }
     }
 
-    if (options.responseFormat?.type === "json_object") {
+    // Only add response_format for models that support it
+    // gpt-4-0613 and older models don't support response_format
+    const supportsJsonMode = options.model.includes("turbo") || 
+                              options.model.includes("gpt-4o") ||
+                              options.model.includes("gpt-4-1106") ||
+                              options.model.includes("gpt-4-0125") ||
+                              options.model.includes("gpt-3.5-turbo-1106") ||
+                              options.model.startsWith("gpt-5") ||
+                              options.model.startsWith("o1") ||
+                              options.model.startsWith("o3");
+    
+    if (options.responseFormat?.type === "json_object" && supportsJsonMode) {
       requestParams.response_format = { type: "json_object" };
     }
 
@@ -261,6 +255,7 @@ export class LLMProviderService {
     const apiKey = this.getApiKey(LLMProvider.ANTHROPIC, options.apiKey);
     const client = new Anthropic({
       apiKey,
+      timeout: 120000, // 2 minute timeout
     });
 
     // Extract system message
@@ -369,6 +364,7 @@ export class LLMProviderService {
     const client = new OpenAI({
       apiKey,
       baseURL: PROVIDER_BASE_URLS.openrouter,
+      timeout: 120000, // 2 minute timeout
       defaultHeaders: {
         "HTTP-Referer": "https://manoe.iliashalkin.com",
         "X-Title": "MANOE",
@@ -412,6 +408,7 @@ export class LLMProviderService {
     const client = new OpenAI({
       apiKey,
       baseURL: PROVIDER_BASE_URLS.deepseek,
+      timeout: 120000, // 2 minute timeout
     });
 
     const requestParams: OpenAI.ChatCompletionCreateParams = {
@@ -451,6 +448,7 @@ export class LLMProviderService {
     const client = new OpenAI({
       apiKey,
       baseURL: PROVIDER_BASE_URLS.venice,
+      timeout: 120000, // 2 minute timeout
     });
 
     const requestParams: OpenAI.ChatCompletionCreateParams = {

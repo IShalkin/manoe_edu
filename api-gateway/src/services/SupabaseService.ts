@@ -59,6 +59,20 @@ interface AuditLog {
   created_at: string;
 }
 
+export interface ResearchHistoryItem {
+  id: string;
+  provider: string;
+  model?: string;
+  seed_idea: string;
+  target_audience?: string;
+  themes?: string[];
+  moral_compass?: string;
+  content: string;
+  prompt_context?: string;
+  citations?: Array<{ url: string; title?: string }>;
+  created_at: string;
+}
+
 @Service()
 export class SupabaseService {
   private client: SupabaseClient | null = null;
@@ -426,12 +440,18 @@ export class SupabaseService {
     projectId: string;
     artifactType: string;
     content: unknown;
+    phase?: string;
   }): Promise<void> {
     const client = this.getClient();
+    
+    // Derive phase from artifact type if not provided
+    const phase = params.phase || this.derivePhaseFromArtifactType(params.artifactType);
+    
     const { error } = await client.from("run_artifacts").upsert({
       run_id: params.runId,
       project_id: params.projectId,
       artifact_type: params.artifactType,
+      phase: phase,
       content: params.content,
       created_at: new Date().toISOString(),
     });
@@ -439,6 +459,23 @@ export class SupabaseService {
     if (error) {
       throw new Error(`Failed to save run artifact: ${error.message}`);
     }
+  }
+  
+  /**
+   * Derive phase from artifact type
+   */
+  private derivePhaseFromArtifactType(artifactType: string): string {
+    if (artifactType === "narrative") return "genesis";
+    if (artifactType === "characters") return "characters";
+    if (artifactType === "worldbuilding") return "worldbuilding";
+    if (artifactType === "outline") return "outlining";
+    if (artifactType === "advanced_plan") return "advanced_planning";
+    if (artifactType.startsWith("draft_scene_")) return "drafting";
+    if (artifactType.startsWith("critique_scene_")) return "drafting";
+    if (artifactType.startsWith("revision_scene_")) return "drafting";
+    if (artifactType.startsWith("final_scene_")) return "polish";
+    if (artifactType === "run_state_snapshot") return "snapshot";
+    return "unknown";
   }
 
   /**
@@ -482,5 +519,88 @@ export class SupabaseService {
     }
 
     return data;
+  }
+
+  // ========================================================================
+  // Research Results Operations (Eternal Memory)
+  // ========================================================================
+
+  /**
+   * Get research history for a user
+   */
+  async getResearchHistory(limit: number = 20): Promise<ResearchHistoryItem[]> {
+    const client = this.getClient();
+    const { data, error } = await client
+      .from("research_results")
+      .select("id, provider, model, seed_idea, target_audience, themes, moral_compass, content, prompt_context, citations, created_at")
+      .order("created_at", { ascending: false })
+      .limit(limit);
+
+    if (error) {
+      throw new Error(`Failed to get research history: ${error.message}`);
+    }
+
+    return data || [];
+  }
+
+  /**
+   * Get a specific research result by ID
+   */
+  async getResearchResult(id: string): Promise<ResearchHistoryItem | null> {
+    const client = this.getClient();
+    const { data, error } = await client
+      .from("research_results")
+      .select("*")
+      .eq("id", id)
+      .single();
+
+    if (error) {
+      if (error.code === "PGRST116") {
+        return null;
+      }
+      throw new Error(`Failed to get research result: ${error.message}`);
+    }
+
+    return data;
+  }
+
+  // ========================================================================
+  // State Recovery Operations
+  // ========================================================================
+
+  /**
+   * Get all interrupted run state snapshots for recovery after restart
+   * Returns runs that were saved during graceful shutdown and haven't been completed
+   */
+  async getInterruptedRunSnapshots(): Promise<Array<{ run_id: string; project_id: string; content: unknown }>> {
+    const client = this.getClient();
+    const { data, error } = await client
+      .from("run_artifacts")
+      .select("run_id, project_id, content")
+      .eq("artifact_type", "run_state_snapshot")
+      .order("created_at", { ascending: false });
+
+    if (error) {
+      console.error(`Failed to get interrupted run snapshots: ${error.message}`);
+      return [];
+    }
+
+    return data || [];
+  }
+
+  /**
+   * Delete a run state snapshot after successful restoration or completion
+   */
+  async deleteRunStateSnapshot(runId: string): Promise<void> {
+    const client = this.getClient();
+    const { error } = await client
+      .from("run_artifacts")
+      .delete()
+      .eq("run_id", runId)
+      .eq("artifact_type", "run_state_snapshot");
+
+    if (error) {
+      console.error(`Failed to delete run state snapshot: ${error.message}`);
+    }
   }
 }

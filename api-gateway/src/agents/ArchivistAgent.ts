@@ -1,104 +1,8 @@
 /**
- * ============================================================================
- * ARCHIVIST AGENT
- * ============================================================================
+ * Archivist Agent
  * 
- * The Archivist is the CONTINUITY KEEPER of MANOE - like a script supervisor
- * on a film set who ensures that the coffee cup is in the same position
- * between takes. In long-form narrative generation, maintaining consistency
- * is CRITICAL and surprisingly difficult.
- * 
- * THE CONTEXT DRIFT PROBLEM:
- * --------------------------
- * In multi-agent systems with revision loops, a dangerous bug can occur:
- * 
- *   Scene 1: "The hero was wounded in the battle, blood seeping from his arm."
- *   Scene 5: "The hero raised both arms triumphantly, uninjured."
- *   
- * This happens because:
- *   1. LLMs have limited context windows
- *   2. Summarization chains may compress away important details
- *   3. Revision loops focus on specific issues, forgetting others
- * 
- * The Archivist SOLVES this by maintaining "Key Constraints" - canonical
- * facts that MUST be preserved across all scenes.
- * 
- * HOW THE ARCHIVIST WORKS:
- * ------------------------
- * 
- *   1. RAW FACTS COLLECTION
- *      As scenes are generated, agents extract "raw facts":
- *      - "Hero was wounded in battle" (Scene 1, from Writer)
- *      - "Villain revealed his true identity" (Scene 3, from Writer)
- *      - "Magic system requires blood sacrifice" (Scene 2, from Worldbuilder)
- * 
- *   2. PERIODIC CONSOLIDATION (Every 3 Scenes)
- *      The Archivist runs and processes raw facts:
- *      - IDENTIFY: Which facts are important enough to be constraints?
- *      - RESOLVE: If facts conflict, which is canonical? (latest wins)
- *      - DISCARD: Remove redundant or irrelevant facts
- *      - GENERATE: Create/update Key Constraints list
- * 
- *   3. KEY CONSTRAINTS OUTPUT
- *      Semantic key-value pairs that are included in all future prompts:
- *      - key: "hero_health_status", value: "Wounded in left arm", scene: 1
- *      - key: "villain_identity", value: "Revealed as king's brother", scene: 3
- * 
- * SEMANTIC KEYS (Important Design Decision):
- * ------------------------------------------
- * We use SEMANTIC KEYS instead of UUIDs for constraint addressing:
- * 
- *   GOOD: key="hero_health_status", value="Wounded"
- *   BAD:  key="constraint_abc123", value="Hero is wounded"
- * 
- * Why? Semantic keys make superseding DETERMINISTIC:
- *   - If Scene 5 says hero is healed, just update "hero_health_status"
- *   - No need for LLM to figure out which UUID supersedes which
- *   - Simpler, more reliable, cheaper
- * 
- * CHAIN OF THOUGHT (CoT) REASONING:
- * ---------------------------------
- * The Archivist's prompt uses CoT to ensure quality reasoning:
- * 
- *   "Process:
- *    1. IDENTIFY new facts that should become constraints
- *    2. RESOLVE conflicts (keep most recent by timestamp)
- *    3. DISCARD irrelevant or redundant facts
- *    4. GENERATE updated constraint list"
- * 
- * The output includes a "reasoning" field explaining decisions:
- *   {
- *     "key": "hero_health_status",
- *     "value": "Healed by magic in Scene 5",
- *     "reasoning": "Supersedes Scene 1 wound - explicitly healed"
- *   }
- * 
- * WHEN THE ARCHIVIST RUNS:
- * ------------------------
- * The Archivist runs ASYNCHRONOUSLY every 3 scenes:
- *   - Scene 1, 2, 3 → Archivist consolidates
- *   - Scene 4, 5, 6 → Archivist consolidates
- *   - etc.
- * 
- * It does NOT block scene generation - it runs in the background
- * and updates constraints for future scenes.
- * 
- * OUTPUT SCHEMA:
- * --------------
- * The Archivist outputs validated JSON:
- *   {
- *     "constraints": [
- *       { "key": "...", "value": "...", "sceneNumber": N, "reasoning": "..." }
- *     ],
- *     "conflicts_resolved": ["Resolved hero health: wound → healed"],
- *     "discarded_facts": ["Redundant: hero has blue eyes (already tracked)"]
- *   }
- * 
- * This is validated against ArchivistOutputSchema using Zod.
- * 
- * @see StorytellerOrchestrator.ts for when Archivist is called
- * @see AgentModels.ts for KeyConstraint and RawFact types
- * @see BaseAgent.ts for inherited functionality
+ * Manages continuity constraints and resolves conflicts.
+ * Active in: Drafting, Revision, Polish phases (runs every 3 scenes)
  */
 
 import { AgentType, RawFact, KeyConstraint } from "../models/AgentModels";
@@ -144,6 +48,16 @@ export class ArchivistAgent extends BaseAgent {
     
     // Extract key constraints from response
     const constraints = this.extractConstraints(validated as Record<string, unknown>, state.currentScene);
+
+    // Emit thought for Cinematic UI
+    await this.emitThought(runId, "Processing continuity constraints and resolving conflicts...", "neutral");
+    
+    // Emit the actual generated content for the frontend to display
+    await this.emitMessage(runId, validated as Record<string, unknown>, GenerationPhase.DRAFTING);
+    
+    if (constraints.length > 0) {
+      await this.emitThought(runId, `Updated ${constraints.length} key constraints.`, "neutral");
+    }
 
     return {
       content: validated as Record<string, unknown>,

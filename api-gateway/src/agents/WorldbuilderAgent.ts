@@ -48,6 +48,11 @@ export class WorldbuilderAgent extends BaseAgent {
 
     const parsed = this.parseJSON(response);
     const validated = this.validateOutput(parsed, WorldbuildingSchema, runId);
+    
+    // Emit the actual generated content for the frontend to display
+    await this.emitMessage(runId, validated as Record<string, unknown>, GenerationPhase.WORLDBUILDING);
+    await this.emitThought(runId, "World established. Ready for outlining.", "neutral", AgentType.STRATEGIST);
+    
     return { content: validated as Record<string, unknown> };
   }
 

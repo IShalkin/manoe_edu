@@ -1,36 +1,7 @@
 /**
  * Zod Schemas for Agent Outputs
  * 
- * EDUCATIONAL NOTE: Zod Schema Validation for LLM Outputs
- * =========================================================
- * 
- * This file demonstrates a critical pattern in AI/LLM applications:
- * validating and normalizing unpredictable LLM outputs into structured data.
- * 
- * KEY CONCEPTS FOR STUDENTS:
- * 
- * 1. LLM OUTPUT VARIABILITY
- *    LLMs don't always return data in the exact format you request.
- *    For example, if you ask for role: "protagonist", the LLM might return:
- *    - "Protagonist" (title case)
- *    - "PROTAGONIST" (uppercase)
- *    - "main character" (synonym)
- *    
- * 2. DEFENSIVE SCHEMA DESIGN
- *    Schemas should be flexible enough to accept reasonable variations
- *    while still enforcing data quality. Use:
- *    - .transform() to normalize values (e.g., lowercase)
- *    - .optional() for fields LLM might skip
- *    - z.union() to accept multiple formats
- *    - .passthrough() to allow extra fields
- *    
- * 3. GRACEFUL DEGRADATION
- *    When validation fails, decide whether to:
- *    - Reject the data entirely (strict mode)
- *    - Accept with warnings (lenient mode)
- *    - Transform to closest valid format (normalization)
- * 
- * @see https://zod.dev/ for Zod documentation
+ * Validates LLM outputs from all agents to ensure data quality and type safety
  */
 
 import { z } from "zod";
@@ -82,54 +53,16 @@ export const NarrativeSchema = z.object({
 
 /**
  * Character schema (from ProfilerAgent - Characters phase)
- * 
- * EDUCATIONAL NOTE: Handling LLM Output Format Variations
- * ========================================================
- * 
- * This schema demonstrates several techniques for handling unpredictable LLM outputs:
- * 
- * PROBLEM 1: Case Sensitivity
- * ---------------------------
- * We ask for role: "protagonist" but LLM returns "Protagonist" (title case).
- * 
- * SOLUTION: Use .transform() to normalize before validation:
- *   z.string().transform(val => val.toLowerCase()).pipe(z.enum([...]))
- * 
- * The .pipe() chains the transformed value to the enum validator.
- * We also add .or(z.string()) as fallback for unexpected values.
- * 
- * PROBLEM 2: Missing Optional Fields
- * -----------------------------------
- * LLM might skip fields like "motivation" even if we asked for them.
- * 
- * SOLUTION: Use .optional() for fields that aren't strictly required.
- * Better to have partial data than validation failure.
- * 
- * PROBLEM 3: Flexible Data Structures
- * ------------------------------------
- * LLM might return relationships as:
- * - Array: ["friend of Alice", "enemy of Bob"]
- * - Object: { alice: "friend", bob: "enemy" }
- * - String: "Friend of Alice, enemy of Bob"
- * 
- * SOLUTION: Use z.union() to accept multiple formats:
- *   z.union([z.string(), z.array(z.string()), z.record(z.unknown())])
- * 
- * PROBLEM 4: Extra Fields
- * ------------------------
- * LLM might add fields we didn't ask for (e.g., "age", "height").
- * 
- * SOLUTION: Use .passthrough() to allow additional fields without failing.
+ * Made flexible to handle various LLM output formats
  */
 export const CharacterSchema = z.object({
   name: z.string().min(1),
-  // TECHNIQUE: Transform + pipe for case normalization with fallback
-  // LLM returns "Protagonist" but we need "protagonist"
+  // Accept both lowercase and title case roles
   role: z.string().transform((val) => val.toLowerCase()).pipe(
     z.enum(["protagonist", "antagonist", "supporting"])
   ).or(z.string()), // Fallback to any string if transform fails
   archetype: z.string().optional(),
-  // TECHNIQUE: Made optional since LLM doesn't always return it
+  // Make motivation optional since LLM doesn't always return it
   motivation: z.string().optional(),
   psychology: z.object({
     wound: z.string().optional(),
@@ -139,8 +72,7 @@ export const CharacterSchema = z.object({
   backstory: z.string().optional(),
   visual: z.string().optional(),
   voice: z.string().optional(),
-  // TECHNIQUE: Union type to accept multiple formats from LLM
-  // LLM returns string, array, or object depending on its interpretation
+  // Accept string, array, or object for relationships (LLM returns various formats)
   relationships: z.union([
     z.string(),
     z.array(z.string()),

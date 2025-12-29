@@ -58,12 +58,20 @@ export class CriticAgent extends BaseAgent {
     // Determine if revision is needed
     const revisionNeeded = this.isRevisionNeeded(validated as Record<string, unknown>);
 
-    return {
-      content: {
-        ...(validated as Record<string, unknown>),
-        revision_needed: revisionNeeded,
-      },
+    // Emit the actual generated content for the frontend to display
+    const content = {
+      ...(validated as Record<string, unknown>),
+      revision_needed: revisionNeeded,
     };
+    await this.emitMessage(runId, content, phase);
+    
+    if (revisionNeeded) {
+      await this.emitThought(runId, "Revision needed. Sending feedback to Writer.", "concerned", AgentType.WRITER);
+    } else {
+      await this.emitThought(runId, "Scene approved! Moving forward.", "agree");
+    }
+
+    return { content };
   }
 
   /**
